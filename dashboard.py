@@ -23,6 +23,30 @@ from plotly.subplots import make_subplots
 STATE_FILE = Path(__file__).with_name("dashboard_state.json")
 DEFAULT_WATCHLIST = ["SPY", "QQQ", "AAPL", "NVDA", "TSLA", "AMD"]
 
+# Plain coin symbols get "-USD" added automatically (Yahoo's crypto format).
+# Add more coins here any time.
+CRYPTO_SYMBOLS = {
+    "BTC", "ETH", "XRP", "XLM", "FLR", "XDC", "SOL", "DOGE", "ADA", "LINK",
+    "AVAX", "LTC", "DOT", "MATIC", "SHIB", "BCH", "ATOM", "HBAR", "ALGO", "QNT",
+    "YELLOW",
+}
+
+
+def normalize_symbol(t: str) -> str:
+    t = t.strip().upper()
+    return f"{t}-USD" if t in CRYPTO_SYMBOLS else t
+
+
+def px_round(v: float) -> float:
+    """Cheap coins (XRP, XLM, ...) need more decimals than 2."""
+    v = float(v)
+    return round(v, 2) if abs(v) >= 1 else round(v, 6)
+
+
+def fmt_px(v: float) -> str:
+    return f"{v:,.2f}" if abs(v) >= 1 else f"{v:.6f}"
+
+
 st.set_page_config(page_title="Day Trading Dashboard", layout="wide")
 
 
@@ -88,13 +112,13 @@ def summarize(ticker: str, period: str, interval: str, prepost: bool) -> dict | 
     rel_vol = today["Volume"].sum() / avg_daily_vol if avg_daily_vol else float("nan")
     return {
         "Ticker": ticker,
-        "Last": round(float(last["Close"]), 2),
+        "Last": px_round(last["Close"]),
         "Chg %": round((last["Close"] / prev_close - 1) * 100, 2),
         "vs VWAP %": round((last["Close"] / last["VWAP"] - 1) * 100, 2)
         if pd.notna(last["VWAP"]) else None,
         "RSI": round(float(last["RSI"]), 1) if pd.notna(last["RSI"]) else None,
-        "Day High": round(float(today["High"].max()), 2),
-        "Day Low": round(float(today["Low"].min()), 2),
+        "Day High": px_round(today["High"].max()),
+        "Day Low": px_round(today["Low"].min()),
         "Rel Vol (so far)": round(float(rel_vol), 2),
         "Bar time": intra.index[-1].strftime("%m-%d %H:%M"),
     }
@@ -133,7 +157,8 @@ state = load_state()
 with st.sidebar:
     st.header("Settings")
     raw = st.text_area("Watchlist (comma or space separated)", ", ".join(state["watchlist"]))
-    watchlist = list(dict.fromkeys(t.strip().upper() for t in raw.replace(",", " ").split() if t.strip()))
+    watchlist = list(dict.fromkeys(normalize_symbol(t) for t in raw.replace(",", " ").split() if t.strip()))
+    st.caption("Stocks and crypto go in the same box. Type coins as XRP XLM FLR XDC (auto-converted to XRP-USD) or any SYMBOL-USD. Coins Yahoo doesn't carry show a 'No data' warning. Pre/post-market applies to stocks only; crypto trades 24/7.")
     interval = st.selectbox("Candle interval", ["1m", "5m", "15m"], index=1)
     period = st.selectbox("History", ["1d", "5d"], index=1)
     prepost = st.checkbox("Include pre/post-market", value=False)
@@ -147,7 +172,7 @@ with st.sidebar:
         column_config={
             "ticker": st.column_config.TextColumn("Ticker"),
             "direction": st.column_config.SelectboxColumn("When price is", options=["above", "below"]),
-            "price": st.column_config.NumberColumn("Price", format="%.2f"),
+            "price": st.column_config.NumberColumn("Price"),
         },
         key="alerts_editor",
         use_container_width=True,
@@ -179,6 +204,12 @@ def render() -> None:
             s = summarize(t, period, interval, prepost)
         except Exception:
             s = None
+        # Unknown bare symbol? Try it as a coin (e.g. "PEPE" -> "PEPE-USD").
+        if s is None and "-" not in t and "." not in t:
+            try:
+                s = summarize(f"{t}-USD", period, interval, prepost)
+            except Exception:
+                s = None
         (rows if s else failed).append(s or t)
 
     if failed:
@@ -191,13 +222,15 @@ def render() -> None:
     # alerts
     prices = dict(zip(table["Ticker"], table["Last"]))
     for a in state.get("alerts", []):
-        t = str(a.get("ticker", "")).upper()
+        t = normalize_symbol(str(a.get("ticker", "")))
+        if t not in prices and f"{t}-USD" in prices:
+            t = f"{t}-USD"
         p = a.get("price")
         if t in prices and p:
             if a["direction"] == "above" and prices[t] >= p:
-                st.error(f"ALERT: {t} is at {prices[t]:.2f}, at or above {p:.2f}")
+                st.error(f"ALERT: {t} is at {fmt_px(prices[t])}, at or above {fmt_px(p)}")
             elif a["direction"] == "below" and prices[t] <= p:
-                st.error(f"ALERT: {t} is at {prices[t]:.2f}, at or below {p:.2f}")
+                st.error(f"ALERT: {t} is at {fmt_px(prices[t])}, at or below {fmt_px(p)}")
 
     def color_pct(v):
         if pd.isna(v):
