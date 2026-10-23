@@ -18,6 +18,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 from plotly.subplots import make_subplots
 
@@ -270,11 +271,23 @@ else:
 st.divider()
 st.subheader("Following on X")
 if follow:
-    cols = st.columns(min(len(follow), 4))
+    cols = st.columns(min(len(follow), 2))
     for i, handle in enumerate(follow):
-        cols[i % len(cols)].link_button(
-            f"@{handle}", f"https://x.com/{handle}", use_container_width=True
-        )
-    st.caption("Opens each account on x.com in a new tab.")
+        with cols[i % len(cols)]:
+            components.html(
+                f"""
+                <a class="twitter-timeline" data-height="420" data-tweet-limit="1"
+                   data-chrome="noheader nofooter transparent"
+                   href="https://twitter.com/{handle}">Loading latest post from @{handle}...</a>
+                <script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
+                """,
+                height=440,
+                scrolling=True,
+            )
+            st.caption(f"[@{handle} on x.com](https://x.com/{handle})")
+    st.caption(
+        "Latest post per account via X's free embed. If a box stays blank, X is blocking "
+        "the embed for this browser; use the x.com link under it."
+    )
 else:
-    st.caption("Add X handles in the sidebar to get quick links to those accounts here.")
+    st.caption("Add X handles in the sidebar to show each account's latest post here.")
