@@ -19,6 +19,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from html import escape as html_escape
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -90,6 +91,16 @@ st.set_page_config(page_title="Live Markets", layout="wide", initial_sidebar_sta
 st.markdown(
     "<style>.block-container{padding-top:4.5rem;} [data-testid='stSidebar']{display:none;}"
     " [data-testid='stSidebarCollapsedControl']{display:none;}</style>",
+    unsafe_allow_html=True,
+)
+
+
+st.markdown(
+    """<style>
+    [class*="st-key-rm_"] button{border-radius:50%;width:28px;height:28px;min-height:0;
+      padding:0;background:#dc2626;color:#fff;border:none;font-weight:700;}
+    [class*="st-key-rm_"] button:hover{background:#b91c1c;color:#fff;}
+    </style>""",
     unsafe_allow_html=True,
 )
 
@@ -214,11 +225,19 @@ def on_pick(kind: str) -> None:
     st.session_state[key] = None
 
 
-def on_custom_add() -> None:
-    kind = st.session_state.get("add_kind", "Crypto")
-    for sym in parse_symbols(st.session_state.get("custom_text", ""), kind == "Crypto"):
+def on_custom_add(kind: str) -> None:
+    key = f"custom_{kind}"
+    for sym in parse_symbols(st.session_state.get(key, ""), kind == "Crypto"):
         add_symbol(sym, kind)
-    st.session_state["custom_text"] = ""
+    st.session_state[key] = ""
+
+
+def move_symbol(kind: str, i: int, delta: int) -> None:
+    lst = st.session_state.crypto if kind == "Crypto" else st.session_state.stocks
+    j = i + delta
+    if 0 <= j < len(lst):
+        lst[i], lst[j] = lst[j], lst[i]
+        save_lists()
 
 
 def reset_lists() -> None:
@@ -227,41 +246,66 @@ def reset_lists() -> None:
     save_lists()
 
 
-def edit_view() -> None:
-    st.caption("Tap the minus to remove something. Add new ones at the bottom.")
-    for title, items in (("Crypto", crypto), ("Stocks", stocks)):
-        if not items:
-            continue
-        st.markdown(f"**{title}**")
-        for sym in list(items):
-            c1, c2 = st.columns([8, 1])
-            c1.markdown(label(sym, ALL_NAMES))
-            c2.button("−", key=f"rm_{sym}", on_click=remove_symbol, args=(sym,), help="Remove")
+BADGE_COLORS = ["#f7931a", "#627eea", "#26a17b", "#3b82f6", "#8b5cf6",
+                "#ef4444", "#14b8a6", "#eab308", "#ec4899", "#22c55e"]
 
-    st.divider()
-    st.markdown("### ＋ Add any stock or crypto")
-    kind = st.radio(
-        "What are you adding?", ["Crypto", "Stocks"], horizontal=True, key="add_kind"
+
+def badge(sym: str, is_crypto: bool) -> str:
+    """Small colored circle with the ticker's first letters (edit mode only)."""
+    base = sym.split(":")[-1]
+    if is_crypto:
+        for suffix in ("USDT", "USDC", "USD"):
+            if base.endswith(suffix) and len(base) > len(suffix):
+                base = base[: -len(suffix)]
+                break
+    color = BADGE_COLORS[sum(ord(ch) for ch in base) % len(BADGE_COLORS)]
+    return (
+        f'<div style="width:30px;height:30px;border-radius:50%;background:{color};'
+        "color:#fff;display:flex;align-items:center;justify-content:center;"
+        f'font-weight:700;font-size:10px">{html_escape(base[:3])}</div>'
     )
+
+
+def edit_group(kind: str) -> None:
+    items = st.session_state.crypto if kind == "Crypto" else st.session_state.stocks
     catalog = CRYPTO_CATALOG if kind == "Crypto" else STOCK_CATALOG
-    current = crypto if kind == "Crypto" else stocks
-    options = [s for s in catalog if s not in current]
-    st.selectbox(
-        "Browse the list or type to search",
-        options,
-        index=None,
-        key=f"pick_{kind}",
-        placeholder="Click to browse, or start typing a name...",
-        format_func=lambda s: label(s, ALL_NAMES),
-        on_change=on_pick,
-        args=(kind,),
-    )
-    st.text_input(
-        "Not in the list? Type any symbol",
-        key="custom_text",
-        placeholder="KRAKEN:FLRUSD, NYSE:JPM, or just XRP for a coin",
-    )
-    st.button("Add symbol", on_click=on_custom_add)
+    noun = "crypto" if kind == "Crypto" else "stock"
+    st.markdown(f"**{kind.upper()}**")
+    for i, sym in enumerate(list(items)):
+        c_rm, c_logo, c_name, c_up, c_dn = st.columns(
+            [1, 1, 8, 1, 1], vertical_alignment="center"
+        )
+        c_rm.button("−", key=f"rm_{sym}", on_click=remove_symbol, args=(sym,), help="Remove")
+        c_logo.markdown(badge(sym, kind == "Crypto"), unsafe_allow_html=True)
+        c_name.markdown(label(sym, ALL_NAMES))
+        c_up.button("▲", key=f"up_{sym}", on_click=move_symbol,
+                    args=(kind, i, -1), disabled=i == 0, help="Move up")
+        c_dn.button("▼", key=f"dn_{sym}", on_click=move_symbol,
+                    args=(kind, i, 1), disabled=i == len(items) - 1, help="Move down")
+    with st.expander(f"＋ Add {noun}"):
+        options = [s for s in catalog if s not in items]
+        st.selectbox(
+            "Browse the list or type to search",
+            options,
+            index=None,
+            key=f"pick_{kind}",
+            placeholder="Click to browse, or start typing a name...",
+            format_func=lambda s: label(s, ALL_NAMES),
+            on_change=on_pick,
+            args=(kind,),
+        )
+        st.text_input(
+            "Not in the list? Type any symbol",
+            key=f"custom_{kind}",
+            placeholder="KRAKEN:FLRUSD" if kind == "Crypto" else "NYSE:JPM",
+        )
+        st.button("Add symbol", key=f"addbtn_{kind}", on_click=on_custom_add, args=(kind,))
+
+
+def edit_view() -> None:
+    st.caption("Tap − to remove, ▲ ▼ to reorder, and use the Add row under each group to add more.")
+    edit_group("Crypto")
+    edit_group("Stocks")
     st.button("Reset to defaults", on_click=reset_lists)
 
 
