@@ -47,7 +47,7 @@ CRYPTO = [
 
 st.set_page_config(page_title="Live Markets", layout="wide")
 st.markdown(
-    "<style>.block-container{padding-top:1.2rem;}</style>", unsafe_allow_html=True
+    "<style>.block-container{padding-top:4.5rem;}</style>", unsafe_allow_html=True
 )
 
 
@@ -77,7 +77,7 @@ tv(
         "displayMode": "adaptive",
         "locale": "en",
     },
-    height=80,
+    height=100,
 )
 
 tab_watch, tab_chart, tab_heat = st.tabs(["Watchlist", "Chart", "Heatmaps"])
