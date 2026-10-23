@@ -2,7 +2,7 @@
 Live markets dashboard built on TradingView's free embeddable widgets.
 
 Prices stream live inside TradingView's own widgets, so there is no auto-refresh.
-Use the "Add / edit" button on the Watchlist tab to pick coins and stocks. Your
+Use the Edit button on the Watchlist tab to remove or add coins and stocks. Your
 choices are saved in the page URL, so bookmark the page after you customize it.
 
 Run locally:
@@ -187,52 +187,82 @@ stocks = st.session_state.stocks
 crypto = st.session_state.crypto
 
 
-# ---------- the Add / edit picker ----------
-@st.dialog("Add to your watchlist", width="large")
-def add_dialog() -> None:
-    st.caption(
-        "Click a box to browse the list, or start typing to search. Remove anything "
-        "by clicking the x on it. Press Save when you're done."
+# ---------- edit mode ----------
+ALL_NAMES = {**CRYPTO_CATALOG, **STOCK_CATALOG}
+
+
+def remove_symbol(sym: str) -> None:
+    if sym in st.session_state.crypto:
+        st.session_state.crypto.remove(sym)
+    if sym in st.session_state.stocks:
+        st.session_state.stocks.remove(sym)
+    save_lists()
+
+
+def add_symbol(sym: str, kind: str) -> None:
+    target = st.session_state.crypto if kind == "Crypto" else st.session_state.stocks
+    if sym not in target:
+        target.append(sym)
+    save_lists()
+
+
+def on_pick(kind: str) -> None:
+    key = f"pick_{kind}"
+    sym = st.session_state.get(key)
+    if sym:
+        add_symbol(sym, kind)
+    st.session_state[key] = None
+
+
+def on_custom_add() -> None:
+    kind = st.session_state.get("add_kind", "Crypto")
+    for sym in parse_symbols(st.session_state.get("custom_text", ""), kind == "Crypto"):
+        add_symbol(sym, kind)
+    st.session_state["custom_text"] = ""
+
+
+def reset_lists() -> None:
+    st.session_state.crypto = list(DEFAULT_CRYPTO)
+    st.session_state.stocks = list(DEFAULT_STOCKS)
+    save_lists()
+
+
+def edit_view() -> None:
+    st.caption("Tap the minus to remove something. Add new ones at the bottom.")
+    for title, items in (("Crypto", crypto), ("Stocks", stocks)):
+        if not items:
+            continue
+        st.markdown(f"**{title}**")
+        for sym in list(items):
+            c1, c2 = st.columns([8, 1])
+            c1.markdown(label(sym, ALL_NAMES))
+            c2.button("−", key=f"rm_{sym}", on_click=remove_symbol, args=(sym,), help="Remove")
+
+    st.divider()
+    st.markdown("### ＋ Add any stock or crypto")
+    kind = st.radio(
+        "What are you adding?", ["Crypto", "Stocks"], horizontal=True, key="add_kind"
     )
-    tab_c, tab_s, tab_x = st.tabs(["Crypto", "Stocks", "Other symbol"])
-
-    crypto_opts = list(dict.fromkeys(list(CRYPTO_CATALOG) + crypto))
-    stock_opts = list(dict.fromkeys(list(STOCK_CATALOG) + stocks))
-    names = {**CRYPTO_CATALOG, **STOCK_CATALOG}
-
-    with tab_c:
-        c_sel = st.multiselect(
-            "Coins", crypto_opts, default=crypto,
-            format_func=lambda s: label(s, names),
-        )
-    with tab_s:
-        s_sel = st.multiselect(
-            "Stocks and ETFs", stock_opts, default=stocks,
-            format_func=lambda s: label(s, names),
-        )
-    with tab_x:
-        st.caption(
-            "Not in the lists? Type it with its exchange, like KRAKEN:FLRUSD or "
-            "NYSE:JPM. The Chart tab's search shows exact names."
-        )
-        custom = st.text_input("Symbol(s), separated by commas")
-        custom_kind = st.radio("Add to", ["Crypto", "Stocks"], horizontal=True)
-
-    left, right = st.columns([3, 1])
-    if left.button("Save", type="primary", use_container_width=True):
-        new_c, new_s = list(c_sel), list(s_sel)
-        for sym in parse_symbols(custom, custom_kind == "Crypto"):
-            target = new_c if custom_kind == "Crypto" else new_s
-            if sym not in target:
-                target.append(sym)
-        st.session_state.crypto, st.session_state.stocks = new_c, new_s
-        save_lists()
-        st.rerun()
-    if right.button("Reset", use_container_width=True):
-        st.session_state.crypto = list(DEFAULT_CRYPTO)
-        st.session_state.stocks = list(DEFAULT_STOCKS)
-        save_lists()
-        st.rerun()
+    catalog = CRYPTO_CATALOG if kind == "Crypto" else STOCK_CATALOG
+    current = crypto if kind == "Crypto" else stocks
+    options = [s for s in catalog if s not in current]
+    st.selectbox(
+        "Browse the list or type to search",
+        options,
+        index=None,
+        key=f"pick_{kind}",
+        placeholder="Click to browse, or start typing a name...",
+        format_func=lambda s: label(s, ALL_NAMES),
+        on_change=on_pick,
+        args=(kind,),
+    )
+    st.text_input(
+        "Not in the list? Type any symbol",
+        key="custom_text",
+        placeholder="KRAKEN:FLRUSD, NYSE:JPM, or just XRP for a coin",
+    )
+    st.button("Add symbol", on_click=on_custom_add)
+    st.button("Reset to defaults", on_click=reset_lists)
 
 
 # ---------- live ticker tape ----------
@@ -256,36 +286,41 @@ tab_watch, tab_chart, tab_heat, tab_news = st.tabs(
 
 # ---------- watchlist with logos + names, tabs for crypto/stocks ----------
 with tab_watch:
-    if st.button("＋ Add / edit watchlist", type="primary"):
-        add_dialog()
+    editing = st.session_state.get("editing", False)
+    if st.button("Done" if editing else "✎ Edit", type="primary" if editing else "secondary"):
+        st.session_state.editing = not editing
+        st.rerun()
 
-    groups = []
-    if crypto:
-        groups.append({"name": "Crypto", "originalName": "Crypto",
-                       "symbols": [{"name": s} for s in crypto]})
-    if stocks:
-        groups.append({"name": "Stocks", "originalName": "Stocks",
-                       "symbols": [{"name": s} for s in stocks]})
-    if groups:
-        tv(
-            "embed-widget-market-quotes.js",
-            {
-                "width": "100%",
-                "height": 700,
-                "symbolsGroups": groups,
-                "showSymbolLogo": True,
-                "colorTheme": THEME,
-                "isTransparent": True,
-                "locale": "en",
-            },
-            height=720,
-        )
-        st.caption(
-            "Live prices stream in on their own. Click a row to open that symbol on "
-            "TradingView. Bookmark this page after you edit to keep your list."
-        )
+    if editing:
+        edit_view()
     else:
-        st.info("Your watchlist is empty. Click Add / edit watchlist to pick some.")
+        groups = []
+        if crypto:
+            groups.append({"name": "Crypto", "originalName": "Crypto",
+                           "symbols": [{"name": s} for s in crypto]})
+        if stocks:
+            groups.append({"name": "Stocks", "originalName": "Stocks",
+                           "symbols": [{"name": s} for s in stocks]})
+        if groups:
+            tv(
+                "embed-widget-market-quotes.js",
+                {
+                    "width": "100%",
+                    "height": 700,
+                    "symbolsGroups": groups,
+                    "showSymbolLogo": True,
+                    "colorTheme": THEME,
+                    "isTransparent": True,
+                    "locale": "en",
+                },
+                height=720,
+            )
+            st.caption(
+                "Live prices stream in on their own. Click a row to open that symbol on "
+                "TradingView. Bookmark this page after you edit to keep your list."
+            )
+        else:
+            st.info("Your watchlist is empty. Click Edit to add some.")
 
 # ---------- full chart with built-in search for ANY stock or coin ----------
 with tab_chart:
