@@ -11,6 +11,7 @@ or occasionally wrong). Verify prices in your broker before acting on anything.
 """
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -57,7 +58,7 @@ def load_state() -> dict:
             return json.loads(STATE_FILE.read_text())
         except Exception:
             pass
-    return {"watchlist": DEFAULT_WATCHLIST, "alerts": []}
+    return {"watchlist": DEFAULT_WATCHLIST, "alerts": [], "follow": []}
 
 
 def save_state(state: dict) -> None:
@@ -159,6 +160,17 @@ with st.sidebar:
     raw = st.text_area("Watchlist (comma or space separated)", ", ".join(state["watchlist"]))
     watchlist = list(dict.fromkeys(normalize_symbol(t) for t in raw.replace(",", " ").split() if t.strip()))
     st.caption("Stocks and crypto go in the same box. Type coins as XRP XLM FLR XDC (auto-converted to XRP-USD) or any SYMBOL-USD. Coins Yahoo doesn't carry show a 'No data' warning. Pre/post-market applies to stocks only; crypto trades 24/7.")
+    follow_raw = st.text_area(
+        "X accounts to follow (handles or profile links)",
+        ", ".join(state.get("follow", [])),
+        help="Example: elonmusk, @SEC_News, https://x.com/coinbase",
+    )
+    follow = []
+    for tok in follow_raw.replace(",", " ").split():
+        tok = tok.split("?")[0].rstrip("/").split("/")[-1].lstrip("@")
+        if re.fullmatch(r"[A-Za-z0-9_]{1,15}", tok) and tok not in follow:
+            follow.append(tok)
+
     interval = st.selectbox("Candle interval", ["1m", "5m", "15m"], index=1)
     period = st.selectbox("History", ["1d", "5d"], index=1)
     prepost = st.checkbox("Include pre/post-market", value=False)
@@ -181,6 +193,7 @@ with st.sidebar:
     new_state = {
         "watchlist": watchlist,
         "alerts": alerts_df.dropna().to_dict(orient="records"),
+        "follow": follow,
     }
     if new_state != state:
         save_state(new_state)
@@ -252,3 +265,16 @@ if refresh:
     st.fragment(run_every=refresh)(render)()
 else:
     render()
+
+# ---------- following (X) ----------
+st.divider()
+st.subheader("Following on X")
+if follow:
+    cols = st.columns(min(len(follow), 4))
+    for i, handle in enumerate(follow):
+        cols[i % len(cols)].link_button(
+            f"@{handle}", f"https://x.com/{handle}", use_container_width=True
+        )
+    st.caption("Opens each account on x.com in a new tab.")
+else:
+    st.caption("Add X handles in the sidebar to get quick links to those accounts here.")
